@@ -75,20 +75,20 @@ def fetch_company_research(company: dict) -> dict:
     search_name = f"{name} {ticker}".strip()
 
     def search(query, depth="advanced", max_results=5, **kwargs):
-        r = tavily.search(query=query, search_depth=depth, max_results=max_results, **kwargs)
+        r = tavily.search(query=query, search_depth=depth, max_results=max_results, days=365, **kwargs)
         return [{"content": x["content"], "url": x["url"], "title": x.get("title", "")}
                 for x in r["results"]]
 
     sources = {}
-    sources["annual_report"] = search(f"{search_name} annual report 2023 2024")
-    sources["sustainability_report"] = search(f"{search_name} sustainability report ESG SD report 2023 2024")
-    sources["investor_presentation"] = search(f"{search_name} investor presentation analyst day 2024 2025", depth="basic", max_results=3)
+    sources["annual_report"] = search(f"{search_name} annual report 2025 2026")
+    sources["sustainability_report"] = search(f"{search_name} sustainability report ESG SD report 2025 2026")
+    sources["investor_presentation"] = search(f"{search_name} investor presentation analyst day 2025 2026", depth="basic", max_results=3)
     sources["corporate_announcement"] = search(
-        f"{search_name} corporate announcement AGM annual general meeting board resolution 2024 2025",
+        f"{search_name} corporate announcement AGM annual general meeting board resolution 2025 2026",
         depth="advanced", max_results=5,
     )
     sources["news"] = search(
-        f"{search_name} ESG green sustainability carbon renewable 2024 2025",
+        f"{search_name} ESG green sustainability carbon renewable 2025 2026",
         max_results=8,
         include_domains=["bangkokpost.com", "thestandard.co", "krungthepturakij.com",
                          "set.or.th", "reuters.com", "bloomberg.com", "thansettakij.com",
