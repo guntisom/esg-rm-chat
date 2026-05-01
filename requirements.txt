@@ -1,0 +1,4 @@
+anthropic
+tavily-python
+python-dotenv
+streamlit
