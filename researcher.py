@@ -7,8 +7,16 @@ from anthropic import Anthropic
 
 load_dotenv()
 
-tavily = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
-claude = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+# Support both local .env and Streamlit Cloud secrets
+def _get_secret(key: str) -> str:
+    try:
+        import streamlit as st
+        return st.secrets[key]
+    except Exception:
+        return os.getenv(key, "")
+
+tavily = TavilyClient(api_key=_get_secret("TAVILY_API_KEY"))
+claude = Anthropic(api_key=_get_secret("ANTHROPIC_API_KEY"))
 
 
 def resolve_company(query: str) -> dict:
