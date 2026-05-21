@@ -3,6 +3,7 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 from researcher import resolve_company, fetch_company_research, analyze_esg_opportunities
+from researcher_ca import fetch_financials, fetch_company_research_ca, draft_credit_memo, generate_ca_word_doc
 
 load_dotenv()
 
@@ -114,7 +115,7 @@ def generate_word_doc(company, result):
     return buf
 
 
-tab1, tab2 = st.tabs(["ESG Finder", "ESG Finder + Word Doc"])
+tab1, tab2, tab3 = st.tabs(["ESG Finder", "ESG Finder + Word Doc", "Draft Credit Application"])
 
 # ── TAB 1 (original, untouched) ─────────────────────────────────────────────
 with tab1:
@@ -376,4 +377,98 @@ with tab2:
                 file_name=f"esg_{company.get('ticker', item['query']).replace(' ', '_')}.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 key=f"dl_t2_{item['query']}_{id(item)}",
+            )
+
+# ── TAB 3 (Draft Credit Application) ────────────────────────────────────────
+with tab3:
+    st.subheader("Draft Credit Application")
+    st.caption("Enter company and facility details — downloads a Word doc credit memo")
+
+    if "ca_results" not in st.session_state:
+        st.session_state.ca_results = []
+
+    with st.form("ca_form"):
+        company_input_ca = st.text_input(
+            "Company name or SET ticker",
+            placeholder="e.g. TEGH, PTT, GULF, SCG",
+        )
+        col_a, col_b = st.columns(2)
+        with col_a:
+            facility_type = st.selectbox("Facility Type", ["Term Loan", "Working Capital"])
+            tenor = st.number_input("Tenor (years)", min_value=1, max_value=20, value=5)
+        with col_b:
+            amount = st.number_input("Requested Amount (THB)", min_value=0, value=500_000_000, step=10_000_000, format="%d")
+            collateral_type = st.selectbox("Collateral Type", ["Land & Building", "Machinery & Equipment", "Inventory", "Other"])
+
+        collateral_value = st.number_input("Collateral Estimated Value (THB)", min_value=0, value=800_000_000, step=10_000_000, format="%d")
+
+        submitted = st.form_submit_button("Generate Draft CA", type="primary", use_container_width=True)
+
+    if submitted and company_input_ca:
+        if not os.getenv("ANTHROPIC_API_KEY") or not os.getenv("TAVILY_API_KEY"):
+            st.error("Please add your API keys to the `.env` file first.")
+        else:
+            facility = {
+                "facility_type": facility_type,
+                "amount": amount,
+                "tenor": tenor,
+                "collateral_type": collateral_type,
+                "collateral_value": collateral_value,
+            }
+
+            with st.status(f"Preparing credit application for **{company_input_ca}**...", expanded=True) as status:
+                st.write("🔍 Resolving company...")
+                company = resolve_company(company_input_ca)
+
+                if "error" in company:
+                    status.update(label="Company not found", state="error")
+                    st.error(f"Could not find: **{company_input_ca}**. Try a different name or ticker.")
+                else:
+                    st.write(f"✅ Found: **{company.get('english_name')}** ({company.get('ticker', 'non-listed')})")
+
+                    st.write("📊 Fetching financials from SET...")
+                    financials = fetch_financials(company.get("ticker", company_input_ca))
+
+                    if "error" in financials:
+                        st.warning(f"⚠️ Could not fetch financials: {financials['error']}. Proceeding without financial data.")
+                        financials = {"years": [], "income": {}, "balance": {}, "ratios": {}, "source": "Not available"}
+
+                    st.write("📰 Researching company profile and news...")
+                    research = fetch_company_research_ca(company)
+
+                    st.write("✍️ Drafting credit application...")
+                    memo = draft_credit_memo(company, financials, research, facility)
+
+                    status.update(label="✅ Ready to download", state="complete", expanded=False)
+
+                    st.session_state.ca_results.insert(0, {
+                        "query": company_input_ca,
+                        "company": company,
+                        "financials": financials,
+                        "memo": memo,
+                        "facility": facility,
+                    })
+
+    for item in st.session_state.ca_results:
+        company = item["company"]
+        label = f"{company.get('english_name', item['query'])} ({company.get('ticker', '—')})"
+
+        with st.expander(f"📄 {label}", expanded=(item == st.session_state.ca_results[0])):
+            if "error" in item["memo"]:
+                st.error("Could not generate credit memo.")
+                st.code(item["memo"]["error"])
+                continue
+
+            col_a, col_b, col_c = st.columns(3)
+            col_a.metric("Facility", item["facility"]["facility_type"])
+            col_b.metric("Amount (THB)", f"{item['facility']['amount']:,.0f}")
+            col_c.metric("Tenor", f"{item['facility']['tenor']} years")
+
+            ca_buf = generate_ca_word_doc(company, item["financials"], item["memo"], item["facility"])
+            st.download_button(
+                label="Download Credit Application (.docx)",
+                data=ca_buf,
+                file_name=f"ca_{company.get('ticker', item['query']).replace(' ', '_')}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key=f"dl_t3_{item['query']}_{id(item)}",
             )
