@@ -3,15 +3,13 @@ import json
 import math
 import os
 import re
-import warnings
 
-import yfinance as yf
+import requests
 from anthropic import Anthropic
 from dotenv import load_dotenv
 from tavily import TavilyClient
 
 load_dotenv()
-warnings.filterwarnings("ignore")
 
 
 def _get_secret(key: str) -> str:
@@ -40,34 +38,46 @@ def _fmt(val):
 
 def fetch_financials(ticker: str) -> dict:
     ticker_bk = f"{ticker.upper()}.BK"
-    t = yf.Ticker(ticker_bk)
-    info = t.info or {}
+    api_key = _get_secret("FMP_API_KEY")
+    base = "https://financialmodelingprep.com/api/v3"
 
-    if not info.get("longName") and not info.get("shortName"):
+    def get(endpoint):
+        try:
+            r = requests.get(f"{base}/{endpoint}/{ticker_bk}?limit=4&apikey={api_key}", timeout=15)
+            r.raise_for_status()
+            data = r.json()
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
+
+    income_data  = get("income-statement")
+    balance_data = get("balance-sheet-statement")
+    metrics_data = get("key-metrics")
+    cashflow_data = get("cash-flow-statement")
+
+    if not income_data:
         return {"error": f"No financial data found for {ticker_bk}"}
 
-    fin = t.financials
-    bs = t.balance_sheet
+    years            = [item["date"][:4]                  for item in income_data[:4]]
+    revenue          = [_fmt(item.get("revenue"))         for item in income_data[:4]]
+    ebitda           = [_fmt(item.get("ebitda"))          for item in income_data[:4]]
+    net_income       = [_fmt(item.get("netIncome"))       for item in income_data[:4]]
+    operating_income = [_fmt(item.get("operatingIncome")) for item in income_data[:4]]
 
-    years, revenue, ebitda, net_income, operating_income = [], [], [], [], []
-    if fin is not None and not fin.empty:
-        cols = list(fin.columns[:4])
-        years = [str(c.year) for c in cols]
-        revenue         = [_fmt(fin.loc["Total Revenue", c])      if "Total Revenue"      in fin.index else None for c in cols]
-        ebitda          = [_fmt(fin.loc["EBITDA", c])             if "EBITDA"             in fin.index else None for c in cols]
-        net_income      = [_fmt(fin.loc["Net Income", c])         if "Net Income"         in fin.index else None for c in cols]
-        operating_income= [_fmt(fin.loc["Operating Income", c])   if "Operating Income"   in fin.index else None for c in cols]
+    total_debt   = [_fmt(item.get("totalDebt"))   for item in balance_data[:4]]
+    total_assets = [_fmt(item.get("totalAssets")) for item in balance_data[:4]]
+    total_equity = [_fmt(item.get("totalEquity")) for item in balance_data[:4]]
 
-    total_debt, total_assets, total_equity = [], [], []
-    if bs is not None and not bs.empty:
-        cols_bs = list(bs.columns[:4])
-        total_debt   = [_fmt(bs.loc["Total Debt", c])                            if "Total Debt"                            in bs.index else None for c in cols_bs]
-        total_assets = [_fmt(bs.loc["Total Assets", c])                          if "Total Assets"                          in bs.index else None for c in cols_bs]
-        total_equity = [_fmt(bs.loc["Total Equity Gross Minority Interest", c])  if "Total Equity Gross Minority Interest"  in bs.index else None for c in cols_bs]
+    m  = metrics_data[0]  if metrics_data  else {}
+    i0 = income_data[0]   if income_data   else {}
+    cf = cashflow_data[0] if cashflow_data else {}
 
-    roe = info.get("returnOnEquity")
-    ebitda_margin = info.get("ebitdaMargins")
-    profit_margin = info.get("profitMargins")
+    roe          = m.get("roe")
+    ebitda_val   = float(i0.get("ebitda")  or 0)
+    revenue_val  = float(i0.get("revenue") or 1)
+    ebitda_margin = ebitda_val / revenue_val if revenue_val else None
+    profit_margin = m.get("netProfitMargin")
+    de = m.get("debtToEquity")
 
     return {
         "ticker_bk": ticker_bk,
@@ -84,14 +94,14 @@ def fetch_financials(ticker: str) -> dict:
             "total_equity": total_equity,
         },
         "ratios": {
-            "debt_to_equity": info.get("debtToEquity"),
-            "current_ratio":  info.get("currentRatio"),
-            "roe":            round(roe * 100, 1)          if roe           else None,
-            "ebitda_margin":  round(ebitda_margin * 100, 1) if ebitda_margin else None,
-            "profit_margin":  round(profit_margin * 100, 1) if profit_margin else None,
-            "free_cash_flow": _fmt(info.get("freeCashflow")),
+            "debt_to_equity": round(float(de), 2)              if de           is not None else None,
+            "current_ratio":  m.get("currentRatio"),
+            "roe":            round(float(roe) * 100, 1)       if roe          is not None else None,
+            "ebitda_margin":  round(ebitda_margin * 100, 1)    if ebitda_margin             else None,
+            "profit_margin":  round(float(profit_margin) * 100, 1) if profit_margin         else None,
+            "free_cash_flow": _fmt(cf.get("freeCashFlow")),
         },
-        "source": f"Yahoo Finance / SET — {ticker_bk}",
+        "source": f"Financial Modeling Prep — {ticker_bk}",
     }
 
 

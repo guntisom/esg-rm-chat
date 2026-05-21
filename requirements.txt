@@ -3,4 +3,3 @@ tavily-python
 python-dotenv
 streamlit
 python-docx
-yfinance
