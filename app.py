@@ -430,8 +430,9 @@ with tab3:
                     financials = fetch_financials(company.get("ticker", company_input_ca))
 
                     if "error" in financials:
-                        st.warning(f"⚠️ Could not fetch financials: {financials['error']}. Proceeding without financial data.")
-                        financials = {"years": [], "income": {}, "balance": {}, "ratios": {}, "source": "Not available"}
+                        status.update(label="Financial data unavailable", state="error")
+                        st.error(f"❌ {financials['error']}")
+                        st.stop()
 
                     st.write("📰 Researching company profile and news...")
                     research = fetch_company_research_ca(company)
