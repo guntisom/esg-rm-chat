@@ -44,19 +44,33 @@ def fetch_financials(ticker: str) -> dict:
     def get(endpoint):
         try:
             r = requests.get(f"{base}/{endpoint}/{ticker_bk}?limit=4&apikey={api_key}", timeout=15)
-            r.raise_for_status()
             data = r.json()
+            if isinstance(data, dict) and "Error Message" in data:
+                return {"fmp_error": data["Error Message"]}
             return data if isinstance(data, list) else []
-        except Exception:
-            return []
+        except Exception as e:
+            return {"fmp_error": str(e)}
 
     income_data  = get("income-statement")
-    balance_data = get("balance-sheet-statement")
-    metrics_data = get("key-metrics")
-    cashflow_data = get("cash-flow-statement")
+
+    # Surface FMP errors clearly
+    if isinstance(income_data, dict) and "fmp_error" in income_data:
+        return {"error": f"FMP API error: {income_data['fmp_error']}"}
 
     if not income_data:
-        return {"error": f"No financial data found for {ticker_bk}"}
+        # Try without .BK suffix as fallback
+        ticker_plain = ticker.upper()
+        r2 = requests.get(f"{base}/income-statement/{ticker_plain}?limit=4&apikey={api_key}", timeout=15)
+        d2 = r2.json()
+        if isinstance(d2, list) and d2:
+            ticker_bk = ticker_plain
+            income_data = d2
+        else:
+            return {"error": f"No financial data found for {ticker_bk}. FMP may not cover this stock — check if it's listed on SET and try PTT or GULF to verify your API key works."}
+
+    balance_data  = get("balance-sheet-statement")
+    metrics_data  = get("key-metrics")
+    cashflow_data = get("cash-flow-statement")
 
     years            = [item["date"][:4]                  for item in income_data[:4]]
     revenue          = [_fmt(item.get("revenue"))         for item in income_data[:4]]
