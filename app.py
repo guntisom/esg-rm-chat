@@ -3,7 +3,7 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 from researcher import resolve_company, fetch_company_research, analyze_esg_opportunities
-from researcher_ca import fetch_financials, fetch_company_research_ca, draft_credit_memo, generate_ca_word_doc
+from researcher_ca import extract_text_from_pdf, extract_text_from_url, extract_financials_from_mda, fetch_company_research_ca, draft_credit_memo, generate_ca_word_doc
 
 load_dotenv()
 
@@ -382,7 +382,7 @@ with tab2:
 # ── TAB 3 (Draft Credit Application) ────────────────────────────────────────
 with tab3:
     st.subheader("Draft Credit Application")
-    st.caption("Enter company and facility details — downloads a Word doc credit memo")
+    st.caption("Upload the company's MD&A or annual report — Claude will extract financials and draft a credit memo")
 
     if "ca_results" not in st.session_state:
         st.session_state.ca_results = []
@@ -392,6 +392,12 @@ with tab3:
             "Company name or SET ticker",
             placeholder="e.g. TEGH, PTT, GULF, SCG",
         )
+
+        st.markdown("**MD&A / Financial Source** *(provide one)*")
+        mda_file = st.file_uploader("Upload MD&A or Annual Report PDF", type=["pdf"])
+        mda_url  = st.text_input("Or paste document URL", placeholder="https://...")
+
+        st.divider()
         col_a, col_b = st.columns(2)
         with col_a:
             facility_type = st.selectbox("Facility Type", ["Term Loan", "Working Capital"])
@@ -405,7 +411,9 @@ with tab3:
         submitted = st.form_submit_button("Generate Draft CA", type="primary", use_container_width=True)
 
     if submitted and company_input_ca:
-        if not os.getenv("ANTHROPIC_API_KEY") or not os.getenv("TAVILY_API_KEY"):
+        if not mda_file and not mda_url.strip():
+            st.error("Please upload a PDF or paste a URL for the MD&A / annual report.")
+        elif not os.getenv("ANTHROPIC_API_KEY") or not os.getenv("TAVILY_API_KEY"):
             st.error("Please add your API keys to the `.env` file first.")
         else:
             facility = {
@@ -426,11 +434,21 @@ with tab3:
                 else:
                     st.write(f"✅ Found: **{company.get('english_name')}** ({company.get('ticker', 'non-listed')})")
 
-                    st.write("📊 Fetching financials from SET...")
-                    financials = fetch_financials(company.get("ticker", company_input_ca))
+                    st.write("📄 Extracting financials from document...")
+                    if mda_file:
+                        mda_text = extract_text_from_pdf(mda_file.read())
+                    else:
+                        mda_text = extract_text_from_url(mda_url.strip())
+
+                    if not mda_text or len(mda_text) < 100:
+                        status.update(label="Could not read document", state="error")
+                        st.error("❌ Could not extract text from the document. Try a different file or URL.")
+                        st.stop()
+
+                    financials = extract_financials_from_mda(mda_text, company.get("english_name", company_input_ca))
 
                     if "error" in financials:
-                        status.update(label="Financial data unavailable", state="error")
+                        status.update(label="Could not extract financials", state="error")
                         st.error(f"❌ {financials['error']}")
                         st.stop()
 

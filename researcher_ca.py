@@ -115,6 +115,91 @@ def fetch_financials(ticker: str) -> dict:
     }
 
 
+def extract_text_from_pdf(file_bytes: bytes) -> str:
+    import pdfplumber
+    import io
+    text = ""
+    try:
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            for page in pdf.pages[:60]:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+                if len(text) > 30000:
+                    break
+    except Exception as e:
+        return ""
+    return text[:30000]
+
+
+def extract_text_from_url(url: str) -> str:
+    try:
+        r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
+        content_type = r.headers.get("content-type", "")
+        if "pdf" in content_type or url.lower().endswith(".pdf"):
+            return extract_text_from_pdf(r.content)
+        # HTML — strip tags
+        text = re.sub(r"<[^>]+>", " ", r.text)
+        text = re.sub(r"\s+", " ", text)
+        return text[:30000]
+    except Exception:
+        return ""
+
+
+def extract_financials_from_mda(text: str, company_name: str) -> dict:
+    prompt = f"""Extract key financial figures from this MD&A / annual report text for {company_name}.
+
+Text:
+{text[:15000]}
+
+Return JSON only (no markdown). All monetary values in millions THB (M THB).
+Convert billions to millions if needed. Use null for any value not found.
+years array should be ordered latest first (e.g. ["2024","2023","2022"]).
+
+{{
+  "years": ["2024", "2023", "2022"],
+  "income": {{
+    "revenue":          [null, null, null],
+    "ebitda":           [null, null, null],
+    "net_income":       [null, null, null],
+    "operating_income": [null, null, null]
+  }},
+  "balance": {{
+    "total_debt":   [null, null, null],
+    "total_assets": [null, null, null],
+    "total_equity": [null, null, null]
+  }},
+  "ratios": {{
+    "debt_to_equity": null,
+    "current_ratio":  null,
+    "roe":            null,
+    "ebitda_margin":  null,
+    "profit_margin":  null,
+    "free_cash_flow": null
+  }},
+  "source": "MD&A / Annual Report"
+}}"""
+
+    response = claude.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    resp_text = response.content[0].text.strip()
+    resp_text = re.sub(r"^```(?:json)?\s*", "", resp_text)
+    resp_text = re.sub(r"\s*```$", "", resp_text)
+    try:
+        return json.loads(resp_text)
+    except Exception:
+        match = re.search(r"\{.*\}", resp_text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group())
+            except Exception:
+                pass
+    return {"error": "Could not extract financials from document"}
+
+
 def fetch_company_research_ca(company: dict) -> str:
     name = company.get("english_name") or company.get("thai_name", "")
     ticker = company.get("ticker", "")
