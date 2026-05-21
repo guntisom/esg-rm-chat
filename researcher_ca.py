@@ -41,32 +41,28 @@ def fetch_financials(ticker: str) -> dict:
     api_key = _get_secret("FMP_API_KEY")
     base = "https://financialmodelingprep.com/api/v3"
 
+    stable = "https://financialmodelingprep.com/stable"
+
     def get(endpoint):
-        try:
-            r = requests.get(f"{base}/{endpoint}/{ticker_bk}?limit=4&apikey={api_key}", timeout=15)
-            data = r.json()
-            if isinstance(data, dict) and "Error Message" in data:
-                return {"fmp_error": data["Error Message"]}
-            return data if isinstance(data, list) else []
-        except Exception as e:
-            return {"fmp_error": str(e)}
+        # Try new stable API first, fall back to v3
+        for url in [
+            f"{stable}/{endpoint}?symbol={ticker_bk}&period=annual&limit=4&apikey={api_key}",
+            f"{base}/{endpoint}/{ticker_bk}?limit=4&apikey={api_key}",
+        ]:
+            try:
+                r = requests.get(url, timeout=15)
+                data = r.json()
+                if isinstance(data, list) and data:
+                    return data
+                if isinstance(data, dict) and ("Error Message" in data or "error" in data):
+                    continue
+            except Exception:
+                continue
+        return []
 
-    income_data  = get("income-statement")
-
-    # Surface FMP errors clearly
-    if isinstance(income_data, dict) and "fmp_error" in income_data:
-        return {"error": f"FMP API error: {income_data['fmp_error']}"}
-
+    income_data   = get("income-statement")
     if not income_data:
-        # Try without .BK suffix as fallback
-        ticker_plain = ticker.upper()
-        r2 = requests.get(f"{base}/income-statement/{ticker_plain}?limit=4&apikey={api_key}", timeout=15)
-        d2 = r2.json()
-        if isinstance(d2, list) and d2:
-            ticker_bk = ticker_plain
-            income_data = d2
-        else:
-            return {"error": f"No financial data found for {ticker_bk}. FMP may not cover this stock — check if it's listed on SET and try PTT or GULF to verify your API key works."}
+        return {"error": f"No financial data found for {ticker_bk}. FMP may not cover this SET stock on your current plan."}
 
     balance_data  = get("balance-sheet-statement")
     metrics_data  = get("key-metrics")
@@ -192,7 +188,7 @@ Draft these 4 sections in professional banking English. Return JSON only (no mar
 
     response = claude.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=2000,
+        max_tokens=4096,
         messages=[{"role": "user", "content": prompt}],
     )
     text = response.content[0].text.strip()
